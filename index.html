@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <title>教育黑洞遊戲＋手勢控制</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ml5@0.12.2/dist/ml5.min.js"></script>
+  <style>body { margin: 0; overflow: hidden; }</style>
+</head>
+<body>
+<audio id="eatSound" src="https://cdn.pixabay.com/audio/2022/03/15/audio_c18c20816a.mp3"></audio>
+<audio id="hitSound" src="https://cdn.pixabay.com/audio/2022/03/14/audio_132edb2d6c.mp3"></audio>
+<audio id="gameoverSound" src="https://cdn.pixabay.com/audio/2022/03/17/audio_820c7a0168.mp3"></audio>
+
+<script>
+let video;
+let handpose;
+let hands = [];
+
+let targets = [];
+let flames = [];
+let score = 0;
+let gameTime = 60;
+let startTime;
+
+let blackholeSize = 80;
+let blackholeX, blackholeY;
+let blackholeGrow = 0;
+
+// 一般教育符號（不包含蜜蜂）
+const generalSymbols = [
+  "＋", "－", "÷", "C₄H₁₀", "Ar",
+  "A", "CH₄", "C₂H₆", "H₂O", "CO₂", "Na", "H2S"
+];
+
+const beeCount = 8;  // 蜜蜂數量
+const totalTargets = 20;  // 目標總數
+
+let eatSound, hitSound, gameoverSound;
+
+class Target {
+  constructor(symbol, x = null, y = null) {
+    this.symbol = symbol;
+    this.x = x || random(width);
+    this.y = y || random(height);
+    this.baseSize = random(40, 60);
+    this.size = this.baseSize;
+    this.shrink = 0;
+    this.eaten = false;
+    this.speedX = random(-1, 1);
+    this.speedY = random(-1, 1);
+  }
+  move() {
+    this.x += this.speedX;
+    this.y += this.speedY;
+    if (this.x < 0 || this.x > width) this.speedX *= -1;
+    if (this.y < 0 || this.y > height) this.speedY *= -1;
+    if (this.shrink > 0) this.shrink *= 0.9;
+  }
+  draw() {
+    if (!this.eaten || this.shrink > 0.1) {
+      push();
+      noStroke();
+      if (this.symbol === "🐝") {
+        fill(255, 215, 0);
+        textSize(this.size * 0.7);
+        textAlign(CENTER, CENTER);
+        text(this.symbol, this.x, this.y);
+      } else {
+        fill(70, 130, 180, 200);
+        ellipse(this.x, this.y, this.size);
+        fill(255);
+        textSize(this.size / 2);
+        textAlign(CENTER, CENTER);
+        text(this.symbol, this.x, this.y);
+      }
+      pop();
+    }
+  }
+}
+
+class Flame {
+  constructor() {
+    this.x = random(width);
+    this.y = random(height);
+    this.size = random(20, 30);  // 改小火焰尺寸
+    this.hit = false;
+    this.shake = 0;
+    this.speedX = random(-1.5, 1.5);
+    this.speedY = random(-1.5, 1.5);
+  }
+  move() {
+    this.x += this.speedX;
+    this.y += this.speedY;
+    if (this.x < 0 || this.x > width) this.speedX *= -1;
+    if (this.y < 0 || this.y > height) this.speedY *= -1;
+    if (this.shake > 0) this.shake--;
+  }
+  draw() {
+    if (!this.hit || this.shake > 0) {
+      push();
+      translate(this.x + random(-this.shake, this.shake), this.y + random(-this.shake, this.shake));
+      textSize(this.size);
+      text("🔥", 0, 0);
+      pop();
+    }
+  }
+}
+
+function preload() {
+  eatSound = document.getElementById('eatSound');
+  hitSound = document.getElementById('hitSound');
+  gameoverSound = document.getElementById('gameoverSound');
+}
+
+function setup() {
+  createCanvas(640, 480);
+  video = createCapture(VIDEO);
+  video.size(width, height);
+  video.hide();
+
+  handpose = ml5.handpose(video, () => {
+    console.log("✅ 模型載入完成");
+  });
+  handpose.on("predict", results => {
+    hands = results;
+  });
+
+  targets = [];
+  flames = [];
+
+  for (let i = 0; i < beeCount; i++) {
+    targets.push(new Target("🐝"));
+  }
+  for (let i = beeCount; i < totalTargets; i++) {
+    targets.push(new Target(random(generalSymbols)));
+  }
+
+  for (let i = 0; i < 10; i++) {
+    flames.push(new Flame());
+  }
+
+  startTime = millis();
+  blackholeX = width / 2;
+  blackholeY = height / 2;
+}
+
+function isFiveFingers(predictions) {
+  if (predictions.length === 0) return false;
+  const landmarks = predictions[0].landmarks;
+  const palm = landmarks[0];
+  const fingerTips = [4, 8, 12, 16, 20];
+  let count = 0;
+  for (let i = 0; i < fingerTips.length; i++) {
+    let tip = landmarks[fingerTips[i]];
+    let d = dist(tip[0], tip[1], palm[0], palm[1]);
+    if (d > 60) count++;
+  }
+  return count === 5;
+}
+
+function draw() {
+  background(0);
+
+  // 翻轉鏡像畫面
+  push();
+  translate(width, 0);
+  scale(-1, 1);
+  image(video, 0, 0, width, height);
+
+  for (let hand of hands) {
+    fill('yellow');  // 雙手手指都用黃點
+    noStroke();
+    for (let keypoint of hand.landmarks) {
+      ellipse(keypoint[0], keypoint[1], 10);
+    }
+  }
+  pop();
+
+  for (let t of targets) {
+    t.move();
+    t.draw();
+  }
+
+  for (let f of flames) {
+    f.move();
+    f.draw();
+  }
+
+  let canMove = isFiveFingers(hands);
+  if (canMove && hands.length > 0) {
+    let tip = hands[0].landmarks[8];
+    blackholeX = width - tip[0];
+    blackholeY = tip[1];
+  }
+
+  if (blackholeGrow > 0.1) blackholeGrow *= 0.9;
+
+  noStroke();
+  fill(30, 30, 30, 220);
+  ellipse(blackholeX, blackholeY, blackholeSize + blackholeGrow);
+  fill(0);
+  ellipse(blackholeX, blackholeY, (blackholeSize + blackholeGrow) * 0.6);
+
+  for (let t of targets) {
+    if (!t.eaten && dist(blackholeX, blackholeY, t.x, t.y) < (blackholeSize + blackholeGrow) / 2) {
+      t.eaten = true;
+      t.shrink = 1;
+      if (t.symbol === "🐝") {
+        score += 5;
+        blackholeSize += 5;
+      } else if (t.symbol.includes("🟥")) {
+        score += 0.5;
+        blackholeSize += 0.5;
+      } else {
+        score += 1;
+        blackholeSize += 1;
+      }
+      blackholeGrow = 15;
+      eatSound.play();
+    }
+  }
+
+  for (let f of flames) {
+    if (!f.hit && dist(blackholeX, blackholeY, f.x, f.y) < (blackholeSize + blackholeGrow) / 2) {
+      f.hit = true;
+      f.shake = 10;
+      score = max(0, score - 1);
+      hitSound.play();
+    }
+  }
+
+  if (frameCount % 60 === 0) {
+    if (random() < 0.3) targets.push(new Target(random(generalSymbols)));
+    if (random() < 0.2) flames.push(new Flame());
+    if (random() < 0.1) targets.push(new Target("🐝"));
+  }
+
+  fill(255);
+  textSize(20);
+  textAlign(LEFT, TOP);
+  text(`分數: ${score.toFixed(1)}`, 10, 10);
+  let elapsed = (millis() - startTime) / 1000;
+  let timeLeft = max(0, floor(gameTime - elapsed));
+  text(`剩餘時間: ${timeLeft}`, 10, 35);
+
+  textSize(16);
+  fill(canMove ? 'lime' : 'orange');
+  textAlign(LEFT, BOTTOM);
+  text(canMove ? "五指張開：可控制黑洞" : "請張開五指控制黑洞", 10, height - 10);
+
+  if (timeLeft <= 0) {
+    noLoop();
+    gameoverSound.play();
+    fill(255, 0, 0);
+    textSize(48);
+    textAlign(CENTER, CENTER);
+    text(`遊戲結束！\n分數: ${score.toFixed(1)}`, width / 2, height / 2);
+  }
+}
+</script>
+</body>
+</html>
